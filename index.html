@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <meta name="description" content="UCAT Reflex: focused UCAT practice with screen-based sessions and local progress tracking.">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <title>UCAT Reflex</title>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="streak-bar">
+      <div>
+        <p class="streak-label">Current Streak</p>
+        <strong id="streakValue" class="streak-value">0 days</strong>
+      </div>
+      <div class="streak-visual">
+        <div id="streakFill" class="streak-fill"></div>
+      </div>
+      <span id="streakMeta" class="streak-meta">No activity yet</span>
+    </header>
+
+    <main class="main-content">
+      <section id="homeScreen" class="screen active" aria-label="Home">
+        <div class="home-grid">
+          <button id="launchVrSession" class="home-button" type="button">
+            <span class="home-button-label">Verbal Reasoning</span>
+            <span class="home-button-meta">12-question session</span>
+          </button>
+          <button id="launchDmSession" class="home-button" type="button">
+            <span class="home-button-label">Decision Making</span>
+            <span class="home-button-meta">12-question session</span>
+          </button>
+          <button id="launchQrSession" class="home-button" type="button">
+            <span class="home-button-label">Quantitative Reasoning</span>
+            <span class="home-button-meta">12-question session</span>
+          </button>
+          <button id="launchSjtSession" class="home-button" type="button">
+            <span class="home-button-label">Situational Judgement</span>
+            <span class="home-button-meta">12-question session</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="exerciseScreen" class="screen screen-focus" aria-label="Active Exercise">
+        <div class="exercise-topbar">
+          <button id="quitSessionButton" class="quit-button" type="button" aria-label="Quit exercise">X</button>
+          <div class="exercise-meta">
+            <span id="exerciseModeLabel" class="tag">VR</span>
+            <span id="exerciseCounter" class="tag">Question 1 of 12</span>
+          </div>
+        </div>
+
+        <article class="exercise-card">
+          <header class="exercise-header">
+            <div>
+              <p id="exerciseEyebrow" class="eyebrow exercise-eyebrow">Session</p>
+              <h1 id="exerciseTitle">Exercise Title</h1>
+            </div>
+            <span id="exerciseBadge" class="tag">Ready</span>
+          </header>
+
+          <div id="exerciseContent" class="exercise-content"></div>
+          <div id="exerciseFeedback" class="feedback"></div>
+        </article>
+      </section>
+
+      <section id="resultsScreen" class="screen screen-focus" aria-label="Results">
+        <article class="result-card">
+          <p class="eyebrow">Session Summary</p>
+          <h1 id="resultsTitle">Results</h1>
+          <div class="results-metrics">
+            <article class="metric-card">
+              <span class="metric-label">Accuracy</span>
+              <strong id="resultsAccuracy">0%</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Time</span>
+              <strong id="resultsTime">0m 00s</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">WPM</span>
+              <strong id="resultsWpm">--</strong>
+            </article>
+          </div>
+          <div id="resultsMeta" class="results-meta"></div>
+          <button id="backHomeButton" class="primary-button full-width-button" type="button">Back to Home</button>
+        </article>
+      </section>
+
+      <section id="statsScreen" class="screen" aria-label="Stats">
+        <div class="screen-header">
+          <div>
+            <p class="eyebrow">Progress Dashboard</p>
+            <h2>Stats</h2>
+          </div>
+          <button id="exportButton" class="ghost-button" type="button">Export Data</button>
+        </div>
+
+        <div class="summary-grid">
+          <article class="card stat-card">
+            <span class="summary-label">VR</span>
+            <strong id="vrSummaryValue">0%</strong>
+            <span id="vrSummaryMeta" class="summary-meta">No sessions yet</span>
+          </article>
+          <article class="card stat-card">
+            <span class="summary-label">DM</span>
+            <strong id="dmSummaryValue">0%</strong>
+            <span id="dmSummaryMeta" class="summary-meta">No sessions yet</span>
+          </article>
+          <article class="card stat-card">
+            <span class="summary-label">QR</span>
+            <strong id="qrSummaryValue">0%</strong>
+            <span id="qrSummaryMeta" class="summary-meta">No sessions yet</span>
+          </article>
+          <article class="card stat-card">
+            <span class="summary-label">SJT</span>
+            <strong id="sjtSummaryValue">0%</strong>
+            <span id="sjtSummaryMeta" class="summary-meta">No sessions yet</span>
+          </article>
+        </div>
+
+        <div class="chart-grid">
+          <article class="card chart-card">
+            <div class="card-heading">
+              <h3>VR WPM vs Accuracy</h3>
+            </div>
+            <div class="chart-frame">
+              <canvas id="vrChart" aria-label="VR chart"></canvas>
+            </div>
+          </article>
+          <article class="card chart-card">
+            <div class="card-heading">
+              <h3>DM Accuracy</h3>
+            </div>
+            <div class="chart-frame">
+              <canvas id="dmChart" aria-label="DM chart"></canvas>
+            </div>
+          </article>
+          <article class="card chart-card">
+            <div class="card-heading">
+              <h3>QR Accuracy</h3>
+            </div>
+            <div class="chart-frame">
+              <canvas id="qrChart" aria-label="QR chart"></canvas>
+            </div>
+          </article>
+          <article class="card chart-card">
+            <div class="card-heading">
+              <h3>SJT Accuracy</h3>
+            </div>
+            <div class="chart-frame">
+              <canvas id="sjtChart" aria-label="SJT chart"></canvas>
+            </div>
+          </article>
+        </div>
+
+        <article class="card calendar-card">
+          <div class="card-heading">
+            <h3>Daily Progress</h3>
+            <span id="calendarMonthLabel" class="tag">This Month</span>
+          </div>
+          <div class="calendar-weekdays">
+            <span>Mon</span>
+            <span>Tue</span>
+            <span>Wed</span>
+            <span>Thu</span>
+            <span>Fri</span>
+            <span>Sat</span>
+            <span>Sun</span>
+          </div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+        </article>
+      </section>
+
+      <section id="settingsScreen" class="screen" aria-label="Settings">
+        <div class="screen-header">
+          <div>
+            <p class="eyebrow">Preferences</p>
+            <h2>Settings</h2>
+          </div>
+          <button id="installButton" class="ghost-button hidden" type="button">Install App</button>
+        </div>
+
+        <div class="settings-stack">
+          <article class="card setting-card">
+            <div class="card-heading">
+              <h3>Theme</h3>
+            </div>
+            <div class="theme-toggle" role="group" aria-label="Theme selection">
+              <button class="theme-option active" data-theme-option="light" type="button">Light</button>
+              <button class="theme-option" data-theme-option="dark" type="button">Dark</button>
+              <button class="theme-option" data-theme-option="sepia" type="button">Sepia</button>
+            </div>
+          </article>
+
+          <article class="card setting-card">
+            <div class="card-heading">
+              <h3>Decision Making</h3>
+            </div>
+            <label class="checkbox-row">
+              <input id="persistMedicalMode" type="checkbox">
+              <span>Remember Medical Mode</span>
+            </label>
+            <label class="checkbox-row">
+              <input id="medicalModeToggle" type="checkbox">
+              <span>Start sessions in Medical Mode</span>
+            </label>
+          </article>
+
+          <article class="card setting-card">
+            <div class="card-heading">
+              <h3>Data</h3>
+            </div>
+            <p class="setting-copy">All progress is stored only on this device.</p>
+            <button id="resetDataButton" class="ghost-button full-width-button" type="button">Reset Local Data</button>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <nav class="footer-nav" aria-label="Primary">
+      <button class="nav-button active" data-screen-target="home" type="button" aria-label="Train">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v3H4zm0 5h10v3H4zm0 5h16v3H4z"/></svg>
+        <span>Train</span>
+      </button>
+      <button class="nav-button" data-screen-target="stats" type="button" aria-label="Stats">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9h3v10zm5 0V5h3v14zm5 0v-7h3v7z"/></svg>
+        <span>Stats</span>
+      </button>
+      <button class="nav-button" data-screen-target="settings" type="button" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.8A3.2 3.2 0 1 0 12 15.2 3.2 3.2 0 1 0 12 8.8zm8.3 4.3-1.8-.7a6.9 6.9 0 0 0-.4-1l.8-1.8-1.7-1.7-1.8.8a6.9 6.9 0 0 0-1-.4l-.7-1.8h-2.4l-.7 1.8a6.9 6.9 0 0 0-1 .4l-1.8-.8-1.7 1.7.8 1.8a6.9 6.9 0 0 0-.4 1l-1.8.7v2.4l1.8.7a6.9 6.9 0 0 0 .4 1l-.8 1.8 1.7 1.7 1.8-.8a6.9 6.9 0 0 0 1 .4l.7 1.8h2.4l.7-1.8a6.9 6.9 0 0 0 1-.4l1.8.8 1.7-1.7-.8-1.8a6.9 6.9 0 0 0 .4-1l1.8-.7z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

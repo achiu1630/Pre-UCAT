@@ -686,6 +686,189 @@ const logicLibrary = [
   }
 ];
 
+function createPairKey(left, right) {
+  return [left, right].sort().join("::");
+}
+
+function evaluateLogic(rules, statementRule, mapping = {}) {
+  const terms = [...new Set([...rules.flatMap((rule) => [rule[1], rule[2]]), statementRule[1], statementRule[2]])];
+  const subset = new Map();
+  const disjoint = new Set();
+  const some = new Set();
+  const most = new Set();
+
+  const setSubset = (left, right) => {
+    if (!subset.has(left)) {
+      subset.set(left, new Set());
+    }
+    subset.get(left).add(right);
+  };
+
+  const hasSubset = (left, right) => subset.has(left) && subset.get(left).has(right);
+  const setDisjoint = (left, right) => disjoint.add(createPairKey(left, right));
+  const hasDisjoint = (left, right) => disjoint.has(createPairKey(left, right));
+  const setSome = (left, right) => some.add(createPairKey(left, right));
+  const hasSome = (left, right) => some.has(createPairKey(left, right));
+  const setMost = (left, right) => most.add(`${left}::${right}`);
+  const hasMost = (left, right) => most.has(`${left}::${right}`);
+  const label = (term) => mapping[term] || term;
+
+  terms.forEach((term) => setSubset(term, term));
+
+  rules.forEach(([operator, left, right]) => {
+    if (operator === "all") {
+      setSubset(left, right);
+    } else if (operator === "no") {
+      setDisjoint(left, right);
+    } else if (operator === "some") {
+      setSome(left, right);
+    } else if (operator === "most") {
+      setMost(left, right);
+      setSome(left, right);
+    }
+  });
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    terms.forEach((left) => {
+      terms.forEach((middle) => {
+        terms.forEach((right) => {
+          if (hasSubset(left, middle) && hasSubset(middle, right) && !hasSubset(left, right)) {
+            setSubset(left, right);
+            changed = true;
+          }
+        });
+      });
+    });
+
+    terms.forEach((left) => {
+      terms.forEach((right) => {
+        if (hasDisjoint(left, right)) {
+          terms.forEach((candidate) => {
+            if (hasSubset(candidate, left) && !hasDisjoint(candidate, right)) {
+              setDisjoint(candidate, right);
+              changed = true;
+            }
+            if (hasSubset(candidate, right) && !hasDisjoint(left, candidate)) {
+              setDisjoint(left, candidate);
+              changed = true;
+            }
+          });
+        }
+      });
+    });
+
+    Array.from(some).forEach((pair) => {
+      const [left, right] = pair.split("::");
+      terms.forEach((candidate) => {
+        if (hasSubset(left, candidate) && !hasSome(candidate, right)) {
+          setSome(candidate, right);
+          changed = true;
+        }
+        if (hasSubset(right, candidate) && !hasSome(left, candidate)) {
+          setSome(left, candidate);
+          changed = true;
+        }
+      });
+    });
+
+    Array.from(most).forEach((pair) => {
+      const [left, right] = pair.split("::");
+      terms.forEach((candidate) => {
+        if (hasSubset(right, candidate) && !hasMost(left, candidate)) {
+          setMost(left, candidate);
+          changed = true;
+        }
+      });
+    });
+  }
+
+  const [operator, left, right] = statementRule;
+
+  if (operator === "all") {
+    if (hasSubset(left, right)) {
+      return {
+        answer: true,
+        rationale: `${label(left)} is fully contained within ${label(right)}, so the statement is YES.`
+      };
+    }
+    if (hasDisjoint(left, right)) {
+      return {
+        answer: false,
+        rationale: `${label(left)} and ${label(right)} are disjoint, so “All ${label(left)} are ${label(right)}” must be NO.`
+      };
+    }
+    return {
+      answer: false,
+      rationale: `There is not enough information to prove that every ${label(left)} belongs to ${label(right)}, so under UCAT rules the answer is NO.`
+    };
+  }
+
+  if (operator === "no") {
+    if (hasDisjoint(left, right)) {
+      return {
+        answer: true,
+        rationale: `${label(left)} and ${label(right)} have no overlap, so the statement is YES.`
+      };
+    }
+    if (hasSome(left, right)) {
+      return {
+        answer: false,
+        rationale: `There is confirmed overlap between ${label(left)} and ${label(right)}, so the statement must be NO.`
+      };
+    }
+    return {
+      answer: false,
+      rationale: `The premises do not prove that ${label(left)} and ${label(right)} are completely separate, so under UCAT rules the answer is NO.`
+    };
+  }
+
+  if (operator === "some") {
+    if (hasSome(left, right)) {
+      return {
+        answer: true,
+        rationale: `The premises establish at least one overlap between ${label(left)} and ${label(right)}, so the statement is YES.`
+      };
+    }
+    if (hasDisjoint(left, right)) {
+      return {
+        answer: false,
+        rationale: `${label(left)} and ${label(right)} are disjoint, so “Some ${label(left)} are ${label(right)}” must be NO.`
+      };
+    }
+    return {
+      answer: false,
+      rationale: `The premises never guarantee any overlap between ${label(left)} and ${label(right)}, so under UCAT rules the answer is NO.`
+    };
+  }
+
+  if (operator === "most") {
+    if (hasMost(left, right)) {
+      return {
+        answer: true,
+        rationale: `The “most” relationship carries through the rule chain, so the statement is YES.`
+      };
+    }
+    if (hasDisjoint(left, right)) {
+      return {
+        answer: false,
+        rationale: `${label(left)} and ${label(right)} are disjoint, so a “most” overlap is impossible and the answer is NO.`
+      };
+    }
+    return {
+      answer: false,
+      rationale: `The premises do not prove that most ${label(left)} belong to ${label(right)}, so under UCAT rules the answer is NO.`
+    };
+  }
+
+  return {
+    answer: false,
+    rationale: `The premises do not establish this relationship with certainty, so under UCAT rules the answer is NO.`
+  };
+}
+
 class DmChecklistGenerator {
   constructor({ medicalMode }) {
     this.medicalMode = medicalMode;
@@ -759,16 +942,23 @@ class DmChecklistGenerator {
 
   formatTemplate(template) {
     const mapping = this.createTermMapping();
-    const statements = shuffle(template.statements.map((statement) => ({
-      text: this.formatRule(statement.rule, mapping),
-      answer: statement.answer
-    })));
+    const statements = shuffle(template.statements.map((statement) => {
+      const evaluation = evaluateLogic(template.rules, statement.rule, mapping);
+      return {
+        text: this.formatRule(statement.rule, mapping),
+        answer: evaluation.answer,
+        rule: statement.rule,
+        rationale: evaluation.rationale
+      };
+    }));
 
     return {
       mode: this.medicalMode ? "medical" : "simple",
       structure: template.title,
       premise: template.rules.map((rule) => this.formatRule(rule, mapping)).join(" "),
       statements,
+      rules: template.rules,
+      mapping,
       templateId: template.id
     };
   }
@@ -1501,7 +1691,8 @@ function buildDmSessionQuestions() {
   const generator = new DmChecklistGenerator({ medicalMode: state.settings.medicalMode });
   return generator.generateSession(DM_SESSION_LENGTH).map((question) => ({
     ...question,
-    selectedAnswers: Array(question.statements.length).fill(null)
+    selectedAnswers: Array(question.statements.length).fill(null),
+    review: null
   }));
 }
 
@@ -1674,14 +1865,14 @@ function renderVrQuestion(question) {
       </div>
       <div class="passage-shell">
         <div id="vrPassageOverlay" class="passage-overlay">
-          <button id="readVrPassageButton" class="primary-button full-width-button" type="button">Read Passage</button>
+          <button id="readVrPassageButton" class="primary-button full-width-button" type="button">Show Passage</button>
         </div>
         <article id="vrPassage" class="passage ${state.settings.enableHighlighting ? "passage-highlight-enabled" : ""}">${renderPassageMarkup(question.passage)}</article>
       </div>
       <button id="vrSubmitButton" class="primary-button full-width-button submit-set-button" type="button" disabled>Submit Set</button>
     </div>
   `;
-  setExerciseFeedback("Scan the statements first. Tap Read Passage when you want the timer to begin.");
+  setExerciseFeedback("Scan the statements first. Tap Show Passage when you want the timer to begin.");
 
   const updateVrSelectionUi = () => {
     qsa(".toggle-button").forEach((button) => {
@@ -1750,35 +1941,86 @@ function renderVrQuestion(question) {
 }
 
 function renderDmQuestion(question) {
+  const getDmButtonMarkup = (index, value, label) => {
+    const selectedValue = question.selectedAnswers[index];
+    const review = question.review;
+    const isSelected = selectedValue === value;
+    const expectedValue = question.statements[index].answer;
+    const isExpected = expectedValue === value;
+    const classes = ["toggle-button"];
+
+    if (!review) {
+      if (value === true && isSelected) {
+        classes.push("is-selected-yes");
+      }
+      if (value === false && isSelected) {
+        classes.push("is-selected-no");
+      }
+    } else {
+      if (isSelected && review.results[index].correct) {
+        classes.push("is-review-correct");
+      } else if (isSelected && !review.results[index].correct) {
+        classes.push("is-review-wrong");
+      } else if (!isSelected && isExpected && !review.results[index].correct) {
+        classes.push("is-review-answer");
+      }
+    }
+
+    let marker = "";
+    if (review && isSelected) {
+      marker = review.results[index].correct ? '<span class="toggle-marker">✓</span>' : '<span class="toggle-marker">✕</span>';
+    }
+
+    return `
+      <button
+        class="${classes.join(" ")}"
+        data-statement-index="${index}"
+        data-toggle-value="${value ? "yes" : "no"}"
+        type="button"
+        ${review ? "disabled" : ""}
+      >
+        ${label}${marker}
+      </button>
+    `;
+  };
+
   qs("#exerciseContent").innerHTML = `
     <div class="dm-checklist">
+      <div class="passage-shell is-inline">
+        <article id="dmPassage" class="premise-box">${question.premise}</article>
+      </div>
       <div class="statement-list">
         ${question.statements.map((statement, index) => `
-          <article class="statement-row">
+          <article class="statement-row ${question.review ? (question.review.results[index].correct ? "is-correct" : "is-incorrect") : ""}">
             <div class="statement-row-header">
               <span class="statement-index">Statement ${index + 1}</span>
             </div>
             <p class="statement-copy">${statement.text}</p>
             <div class="toggle-group">
-              <button class="toggle-button" data-statement-index="${index}" data-toggle-value="yes" type="button">YES</button>
-              <button class="toggle-button" data-statement-index="${index}" data-toggle-value="no" type="button">NO</button>
+              ${getDmButtonMarkup(index, true, "YES")}
+              ${getDmButtonMarkup(index, false, "NO")}
             </div>
           </article>
         `).join("")}
       </div>
-      <div class="passage-shell">
-        <div id="dmPassageOverlay" class="passage-overlay">
-          <button id="readDmPassageButton" class="primary-button full-width-button" type="button">Read Passage</button>
+      ${question.review ? `
+        <div class="logic-breakdown">
+          <p class="logic-breakdown-title">Logic Breakdown</p>
+          <p>${question.review.breakdown}</p>
+          <p><strong>Score:</strong> ${question.review.scoreLabel}</p>
         </div>
-        <article id="dmPassage" class="premise-box ${state.settings.enableHighlighting ? "passage-highlight-enabled" : ""}">${renderPassageMarkup(question.premise)}</article>
-      </div>
-      <button id="dmSubmitButton" class="primary-button full-width-button submit-set-button" type="button" disabled>Submit Set</button>
+      ` : ""}
+      <button id="dmSubmitButton" class="primary-button full-width-button submit-set-button ${question.review ? "hidden" : ""}" type="button" disabled>Submit Set</button>
+      <button id="dmContinueButton" class="primary-button full-width-button ${question.review ? "" : "hidden"}" type="button">Continue to Next Set</button>
     </div>
   `;
-  setExerciseFeedback("Pre-scan the statements first. Tap Read Passage to reveal the premise and start timing.");
+  setExerciseFeedback(question.review ? `Score: ${question.review.scoreLabel}` : "Read the extract at the top, then evaluate all five statements.");
 
   const updateDmSelectionUi = () => {
     qsa(".toggle-button").forEach((button) => {
+      if (question.review) {
+        return;
+      }
       const statementIndex = Number(button.dataset.statementIndex);
       const isYes = button.dataset.toggleValue === "yes";
       const selectedValue = question.selectedAnswers[statementIndex];
@@ -1789,13 +2031,11 @@ function renderDmQuestion(question) {
     qs("#dmSubmitButton").disabled = question.selectedAnswers.some((answer) => answer === null) || !state.session.vrReadingFinished;
   };
 
-  qs("#readDmPassageButton").addEventListener("click", () => {
+  if (!question.review && !state.session.vrReadingFinished) {
     state.session.vrReadingFinished = true;
-    qs("#dmPassageOverlay").classList.add("hidden");
     startReadingTimer();
-    updateDmSelectionUi();
-    setExerciseFeedback("Premise revealed. Evaluate all five statements, then submit the set.");
-  });
+    setExerciseFeedback("Evaluate all five statements, then submit the set.");
+  }
 
   qsa(".toggle-button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1815,9 +2055,27 @@ function renderDmQuestion(question) {
 
     state.session.locked = true;
     const readSeconds = stopReadingTimer();
-    const correctCount = question.statements.filter((statement, index) => statement.answer === question.selectedAnswers[index]).length;
+    const results = question.statements.map((statement, index) => ({
+      expected: statement.answer,
+      selected: question.selectedAnswers[index],
+      correct: statement.answer === question.selectedAnswers[index],
+      rationale: statement.rationale
+    }));
+    const correctCount = results.filter((item) => item.correct).length;
     const points = correctCount === 5 ? 2 : correctCount === 4 ? 1 : 0;
     const wpm = Math.round((countWords(question.premise) / Math.max(1, readSeconds)) * 60);
+    const trickyIndex = results.findIndex((item) => !item.correct);
+    const breakdownIndex = trickyIndex >= 0 ? trickyIndex : results.findIndex((item) => item.expected === false);
+    const scoreLabel = points === 2 ? "2/2 (Perfect)" : points === 1 ? "1/2 (Partial)" : "0/2";
+
+    question.review = {
+      results,
+      correctCount,
+      points,
+      wpm,
+      scoreLabel,
+      breakdown: `Statement ${breakdownIndex + 1} is ${question.statements[breakdownIndex].answer ? "YES" : "NO"} because ${question.statements[breakdownIndex].rationale.charAt(0).toLowerCase()}${question.statements[breakdownIndex].rationale.slice(1)}`
+    };
 
     state.session.answers.push({
       correct: correctCount === 5,
@@ -1829,17 +2087,17 @@ function renderDmQuestion(question) {
     });
 
     setExerciseFeedback(
-      `${correctCount}/5 correct • ${points} point${points === 1 ? "" : "s"} • ${wpm} WPM`,
+      `Score: ${question.review.scoreLabel} • ${correctCount}/5 correct • ${wpm} WPM`,
       points > 0 ? "success" : "error"
     );
-    queueNextOrFinish(1200);
+    renderDmQuestion(question);
   });
 
-  if (state.settings.enableHighlighting) {
-    qsa("#dmPassage .passage-word").forEach((word) => {
-      word.addEventListener("click", () => {
-        word.classList.toggle("highlighted");
-      });
+  const continueButton = qs("#dmContinueButton");
+  if (continueButton) {
+    continueButton.addEventListener("click", () => {
+      state.session.locked = false;
+      continueToNextSet();
     });
   }
 
@@ -1937,6 +2195,15 @@ function queueNextOrFinish(delay = 1000) {
     }
     renderCurrentExercise();
   }, delay);
+}
+
+function continueToNextSet() {
+  state.session.index += 1;
+  if (state.session.index >= state.session.questions.length) {
+    finishSession();
+    return;
+  }
+  renderCurrentExercise();
 }
 
 function finishSession() {

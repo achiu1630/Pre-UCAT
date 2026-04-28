@@ -1,10 +1,10 @@
-const CACHE_NAME = "ucat-reflex-v2";
+const CACHE_NAME = "ucat-reflex-v3";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./manifest.json",
+  "./styles.css?v=20260428b",
+  "./app.js?v=20260428b",
+  "./manifest.json?v=20260428b",
   "./icons/icon-192.svg",
   "./icons/icon-512.svg"
 ];
@@ -29,11 +29,15 @@ self.addEventListener("fetch", (event) => {
   }
 
   const requestUrl = new URL(event.request.url);
+  const isSameOrigin = requestUrl.origin === self.location.origin;
   const isAppShellRequest = requestUrl.pathname.endsWith("/")
     || requestUrl.pathname.endsWith("/index.html")
-    || requestUrl.pathname.endsWith(".html");
+    || requestUrl.pathname.endsWith(".html")
+    || requestUrl.pathname.endsWith(".js")
+    || requestUrl.pathname.endsWith(".css")
+    || requestUrl.pathname.endsWith(".json");
 
-  if (isAppShellRequest) {
+  if (isSameOrigin && isAppShellRequest) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
@@ -41,7 +45,11 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
-        .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html")))
+        .catch(() =>
+          caches.match(event.request).then((cached) =>
+            cached || caches.match("./index.html")
+          )
+        )
     );
     return;
   }

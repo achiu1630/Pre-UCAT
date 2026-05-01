@@ -707,6 +707,57 @@ const logicLibrary = [
   }
 ];
 
+const EXTREME_DM_LIBRARY = [
+  {
+    id: "nested-exception",
+    title: "Nested Exception",
+    rules: [["some", "A", "B"], ["all", "B", "C"], ["no", "C", "D"], ["some", "E", "D"]],
+    statements: [
+      { rule: ["some", "A", "C"] },
+      { rule: ["no", "B", "D"] },
+      { rule: ["might", "A", "D"] },
+      { rule: ["must", "A", "C"] },
+      { rule: ["some", "B", "D"] }
+    ]
+  },
+  {
+    id: "common-ground-probability",
+    title: "Common Ground Trap",
+    rules: [["some", "A", "B"], ["some", "C", "B"], ["no", "B", "D"], ["all", "E", "D"]],
+    statements: [
+      { rule: ["might", "A", "C"] },
+      { rule: ["some", "A", "C"] },
+      { rule: ["some", "A", "D"] },
+      { rule: ["no", "E", "B"] },
+      { rule: ["must", "C", "A"] }
+    ]
+  },
+  {
+    id: "only-unless-barrier",
+    title: "Only-If Barrier",
+    rules: [["only", "A", "B"], ["all", "B", "C"], ["no", "C", "D"], ["some", "E", "A"]],
+    statements: [
+      { rule: ["all", "A", "C"] },
+      { rule: ["no", "E", "D"] },
+      { rule: ["might", "A", "D"] },
+      { rule: ["some", "E", "C"] },
+      { rule: ["all", "C", "A"] }
+    ]
+  },
+  {
+    id: "venn-chain-noise",
+    title: "Venn-Chain Interference",
+    rules: [["all", "A", "B"], ["some", "B", "C"], ["no", "C", "D"], ["all", "E", "A"]],
+    statements: [
+      { rule: ["might", "A", "C"] },
+      { rule: ["all", "E", "B"] },
+      { rule: ["no", "E", "D"] },
+      { rule: ["some", "A", "D"] },
+      { rule: ["must", "B", "C"] }
+    ]
+  }
+];
+
 function createPairKey(left, right) {
   return [left, right].sort().join("::");
 }
@@ -947,18 +998,32 @@ class DmChecklistGenerator {
     this.medicalMode = medicalMode;
   }
 
-  generateSession(count = DM_SESSION_LENGTH) {
+  generateSession(count = DM_SESSION_LENGTH, complexityLevel = 2) {
+    return Array.from({ length: count }, () => this.generateQuestion(complexityLevel));
+  }
+
+  generateQuestion(complexityLevel = 2, avoidIds = []) {
     const weekKey = this.getWeekKey();
     const seenMap = this.loadSeenMap();
     const seenThisWeek = new Set(seenMap[weekKey] || []);
-    const candidates = shuffle(logicLibrary);
-    const unseen = candidates.filter((template) => !seenThisWeek.has(template.id));
-    const selected = (unseen.length >= count ? unseen : candidates).slice(0, count);
+    const candidates = shuffle(this.getTemplatePool(complexityLevel));
+    const unseen = candidates.filter((template) => !seenThisWeek.has(template.id) && !avoidIds.includes(`dm-${this.medicalMode ? "medical" : "simple"}-${template.id}`));
+    const selected = unseen.length ? unseen[0] : candidates[0];
 
-    seenMap[weekKey] = [...new Set([...(seenMap[weekKey] || []), ...selected.map((template) => template.id)])];
+    seenMap[weekKey] = [...new Set([...(seenMap[weekKey] || []), selected.id])];
     this.saveSeenMap(seenMap);
 
-    return selected.map((template) => this.formatTemplate(template));
+    return this.formatTemplate(selected, complexityLevel);
+  }
+
+  getTemplatePool(complexityLevel = 2) {
+    if (complexityLevel <= 1) {
+      return logicLibrary.slice(0, 6);
+    }
+    if (complexityLevel === 2) {
+      return logicLibrary;
+    }
+    return [...logicLibrary, ...EXTREME_DM_LIBRARY];
   }
 
   getWeekKey(date = new Date()) {
@@ -1067,7 +1132,18 @@ class DmChecklistGenerator {
     return candidates;
   }
 
-  formatTemplate(template) {
+  buildNoiseFacts(mapping) {
+    const labels = Object.values(mapping);
+    return shuffle([
+      `${sampleOne([42, 48, 57, 63])}% of ${labels[0]} reviews happened after 18:00 last month.`,
+      `The average turnaround time for ${labels[1]} requests was ${sampleOne([14, 18, 21, 27])} minutes.`,
+      `${sampleOne([3, 4, 5, 6])} of the last ${sampleOne([20, 24, 30, 36])} ${labels[2]} audits were repeated.`,
+      `${sampleOne([12, 18, 24, 30])}% of ${labels[3]} records were filed on paper rather than digitally.`,
+      `${labels[4]} teams logged ${sampleOne([9, 11, 14, 17])} more handovers than usual this week.`
+    ]);
+  }
+
+  formatTemplate(template, complexityLevel = 2) {
     const mapping = this.createTermMapping();
     const directPremiseKeys = new Set(template.rules.map((rule) => createRuleKey(rule)));
     const derivedYesPool = this.deriveTwoStepYesCandidates(template.rules);
@@ -1100,14 +1176,24 @@ class DmChecklistGenerator {
       };
     }));
 
+    const premiseParts = template.rules.map((rule) => this.formatRule(rule, mapping));
+    if (complexityLevel >= 3) {
+      premiseParts.push(...this.buildNoiseFacts(mapping));
+    }
+
     return {
       mode: this.medicalMode ? "medical" : "simple",
       structure: template.title,
-      premise: template.rules.map((rule) => this.formatRule(rule, mapping)).join(" "),
+      premise: shuffle(premiseParts).join(" "),
       statements,
       rules: template.rules,
       mapping,
-      templateId: template.id
+      templateId: template.id,
+      complexityLevel,
+      sourceMode: "dm",
+      uniqueId: `dm-${this.medicalMode ? "medical" : "simple"}-${template.id}`,
+      selectedAnswers: Array(statements.length).fill(null),
+      review: null
     };
   }
 }
@@ -1533,6 +1619,150 @@ function buildSjtScenarioLibrary() {
 
 const sjtScenarios = buildSjtScenarioLibrary();
 
+const sjtConflictThemes = [
+  {
+    id: "refusal-vs-rescue",
+    title: "Refusal During Deterioration",
+    pillars: ["Autonomy", "Beneficence"],
+    scenarioTemplate: "In {setting} {timing}, {character} is helping with a patient who appears to understand the situation but is refusing an intervention that may prevent rapid deterioration.",
+    rationale: "This tests Autonomy versus Beneficence - respect for a patient's decision must be balanced against the instinct to act for immediate clinical benefit.",
+    appropriateness: {
+      ideal: "Clarify capacity and understanding immediately, then escalate to the responsible clinician so the refusal and the clinical risk are managed lawfully and respectfully.",
+      reasonable: "Support a calm explanation of risks and alternatives without pressuring the patient or bypassing their decision.",
+      mild: "Keep encouraging the intervention because it is obviously best for the patient.",
+      severe: "Arrange the intervention anyway because the team believes the refusal is unwise."
+    },
+    importance: {
+      ideal: "Whether the patient has capacity and has understood the consequences of refusing treatment.",
+      secondary: "How quickly the responsible clinician can review the refusal given the clinical risk.",
+      mild: "Whether the refusal is frustrating for the staff involved.",
+      severe: "Whether it would be simpler to treat first and explain later."
+    }
+  },
+  {
+    id: "burnout-lateness",
+    title: "Consistent Lateness and Burnout",
+    pillars: ["Non-maleficence", "Justice"],
+    scenarioTemplate: "At {setting} {timing}, {character} has recently been arriving late, missing small details, and looking increasingly burned out, but patients have not yet come to obvious harm.",
+    rationale: "This tests Non-maleficence versus Justice - patient safety matters, but the colleague also deserves fair support rather than casual blame.",
+    appropriateness: {
+      ideal: "Raise the pattern promptly and appropriately with a senior so safety can be protected while the colleague is supported fairly.",
+      reasonable: "Document specific examples and check whether immediate workload adjustments are available while escalating the concern.",
+      mild: "Ignore it unless a major incident happens because they probably just need a break.",
+      severe: "Complain about the colleague informally without raising the issue through the right professional route."
+    },
+    importance: {
+      ideal: "Whether the pattern could create avoidable risk for patients if it continues.",
+      secondary: "How to escalate the concern in a way that is fair, specific, and supportive rather than purely punitive.",
+      mild: "Whether the lateness is annoying for the rest of the team.",
+      severe: "Whether it is easier to gossip about the problem than address it properly."
+    }
+  },
+  {
+    id: "family-secret-diagnosis",
+    title: "Family Requests Secrecy",
+    pillars: ["Autonomy", "Non-maleficence"],
+    scenarioTemplate: "In {setting} {timing}, {character} is asked by relatives not to tell a patient about a serious diagnosis because they worry the patient will become distressed.",
+    rationale: "This tests Autonomy versus Non-maleficence - protecting a patient from distress does not usually justify overriding their right to truthful information about their own care.",
+    appropriateness: {
+      ideal: "Escalate the request and support an honest, sensitive conversation led by the responsible clinician that respects the patient's right to know.",
+      reasonable: "Explore whether there are cultural or communication issues that need to be handled carefully while still preserving the patient's rights.",
+      mild: "Delay the conversation indefinitely because the relatives seem convinced that secrecy is kinder.",
+      severe: "Agree to conceal the diagnosis from the patient without discussing it with the clinical team."
+    },
+    importance: {
+      ideal: "Whether the patient has a right to truthful information needed for decisions about their care.",
+      secondary: "How to communicate the diagnosis sensitively while addressing the family's concerns.",
+      mild: "Whether the discussion may become emotionally difficult for staff.",
+      severe: "Whether avoiding the conversation entirely would be easier for everyone else."
+    }
+  },
+  {
+    id: "limited-slot-language-barrier",
+    title: "One Slot, Unequal Barriers",
+    pillars: ["Justice", "Beneficence"],
+    scenarioTemplate: "At {setting} {timing}, {character} is involved in choosing who should take the only remaining urgent slot: one patient has greater clinical need, while another is less unwell but faces major language and access barriers.",
+    rationale: "This tests Justice versus Beneficence - urgent resources should be used fairly, but fairness must still account for who is most likely to be disadvantaged without extra support.",
+    appropriateness: {
+      ideal: "Escalate so the decision is made transparently using clinical need while making sure communication barriers are actively addressed.",
+      reasonable: "Gather the relevant clinical details and practical barriers for both patients before the final decision is made.",
+      mild: "Give the slot to the easiest patient to process and leave the rest for later.",
+      severe: "Ignore the access barriers entirely because they are not strictly medical."
+    },
+    importance: {
+      ideal: "Which option is fairest when both clinical urgency and barriers to equitable access are considered together.",
+      secondary: "How to make sure the patient who does not get the slot still receives safe follow-up and communication support.",
+      mild: "Whether the quickest decision would reduce administrative pressure.",
+      severe: "Whether convenience for staff should decide the issue."
+    }
+  }
+];
+
+function buildSjtConflictScenarioLibrary() {
+  const scenarios = [];
+
+  sjtConflictThemes.forEach((conflict) => {
+    sjtContexts.forEach((context) => {
+      sjtCharacters.forEach((character) => {
+        scenarios.push({
+          pillar: conflict.pillars.join(" vs "),
+          title: conflict.title,
+          conflictId: conflict.id,
+          scenario: fillTemplate(conflict.scenarioTemplate, {
+            setting: context.label,
+            timing: context.timing,
+            character
+          }),
+          rationale: conflict.rationale,
+          appropriateness: conflict.appropriateness,
+          importance: conflict.importance
+        });
+      });
+    });
+  });
+
+  return scenarios;
+}
+
+const sjtConflictScenarios = buildSjtConflictScenarioLibrary();
+
+function buildSjtQuestion(complexityLevel = 1, avoidIds = []) {
+  const pool = complexityLevel >= 3 ? [...sjtScenarios, ...sjtConflictScenarios] : sjtScenarios;
+  const candidates = shuffle(pool).filter((scenario) => !avoidIds.some((id) => id.includes(`sjt-${scenario.conflictId}-`)));
+  const scenario = candidates[0] || sampleOne(pool);
+  const promptType = Math.random() > 0.5 ? "appropriateness" : "importance";
+  const source = promptType === "appropriateness" ? scenario.appropriateness : scenario.importance;
+  const indexedResponses = [
+    { response: source.ideal, correct: true, rank: 1 },
+    { response: source.reasonable || source.secondary, correct: false, rank: 2 },
+    { response: source.mild, correct: false, rank: 3 },
+    { response: source.severe, correct: false, rank: 4 }
+  ];
+  const shuffledResponses = shuffle(indexedResponses);
+  const rankingLabels = shuffledResponses
+    .map((item, index) => `${String.fromCharCode(65 + index)}:${item.rank}`)
+    .join(" · ");
+
+  return {
+    sourceMode: "sjt",
+    uniqueId: `sjt-${scenario.conflictId}-${promptType}-${scenario.title}`,
+    pillar: scenario.pillar,
+    title: scenario.title,
+    scenario: scenario.scenario,
+    promptType,
+    promptLabel: promptType === "appropriateness" ? "Appropriateness" : "Importance",
+    prompt: promptType === "appropriateness"
+      ? "Which response is the most appropriate?"
+      : "Which factor is the most important to prioritise?",
+    responses: shuffledResponses.map((item) => item.response),
+    answerIndex: shuffledResponses.findIndex((item) => item.correct),
+    rankingLabels,
+    rationale: scenario.rationale,
+    complexityLevel,
+    review: null
+  };
+}
+
 const state = {
   currentScreen: "home",
   data: loadData(),
@@ -1548,6 +1778,7 @@ function createEmptySession() {
     mode: null,
     questions: [],
     sessionQueue: [],
+    totalQuestionCount: 0,
     index: 0,
     answers: [],
     startedAt: 0,
@@ -1558,6 +1789,10 @@ function createEmptySession() {
     qrHasMistake: false,
     qrDrill: null,
     qrDrillLabel: "",
+    dynamicDifficulty: false,
+    complexityLevel: 1,
+    correctStreak: 0,
+    seenQuestionIds: [],
     reviewResolved: 0,
     reviewHits: 0,
     locked: false,
@@ -1677,6 +1912,10 @@ function modeLabel(mode) {
   return labels[mode] || "Session";
 }
 
+function sessionTotalCount() {
+  return state.session.totalQuestionCount || state.session.questions.length;
+}
+
 function reviewFilterLabel(filter) {
   if (filter === "all") {
     return "All";
@@ -1758,6 +1997,7 @@ function buildErrorBankPayload(question) {
         uniqueId: question.uniqueId || `qr-${question.type}-${question.prompt}`,
         drill: question.drill || "percentage",
         drillLabel: question.drillLabel || "Quantitative Reasoning",
+        complexityLevel: question.complexityLevel || 1,
         type: question.type,
         prompt: question.prompt,
         answer: question.answer,
@@ -1860,6 +2100,7 @@ function hydrateErrorBankQuestion(entry) {
     question.solveStartedAt = 0;
     question.inputUnlocked = false;
     question.estimateStartedAt = 0;
+    question.complexityLevel = question.complexityLevel || 1;
     return question;
   }
 
@@ -1972,10 +2213,11 @@ function setExerciseTimerLabel(text) {
 
 function setExerciseProgress() {
   const fill = qs("#exerciseProgressFill");
-  if (!fill || !state.session.questions.length) {
+  const total = sessionTotalCount();
+  if (!fill || !total) {
     return;
   }
-  const percent = ((state.session.index + 1) / state.session.questions.length) * 100;
+  const percent = ((state.session.index + 1) / total) * 100;
   fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
 }
 
@@ -2217,89 +2459,76 @@ function buildVrSessionQuestions() {
   }));
 }
 
-function buildDmSessionQuestions() {
+function buildDmSessionQuestions(complexityLevel = 2) {
   const generator = new DmChecklistGenerator({ medicalMode: state.settings.medicalMode });
-  return generator.generateSession(DM_SESSION_LENGTH).map((question) => ({
-    ...question,
-    sourceMode: "dm",
-    uniqueId: `dm-${question.mode}-${question.templateId}`,
-    selectedAnswers: Array(question.statements.length).fill(null),
-    review: null
+  return generator.generateSession(DM_SESSION_LENGTH, complexityLevel);
+}
+
+function buildQrSessionQuestions(drill = "percentage", complexityLevel = 1) {
+  return Array.from({ length: SESSION_LENGTH }, (_, index) => ({
+    ...buildExtremeQrQuestion(drill, complexityLevel),
+    sourceMode: "qr",
+    uniqueId: `qr-${drill}-${complexityLevel}-${index}-${Date.now()}`
   }));
 }
 
-function buildQrSessionQuestions(drill = "percentage") {
-  const builders = {
-    percentage: [
-      createQrPercentageIncreaseQuestion,
-      createQrPercentageDecreaseQuestion,
-      createQrReversePercentageQuestion,
-      createQrVatTableQuestion
-    ],
-    conversion: [
-      createQrCurrencyQuestion,
-      createQrUnitConversionQuestion,
-      createQrDoseConversionQuestion,
-      createQrExchangeBoardQuestion
-    ],
-    rate: [
-      createQrAverageSpeedQuestion,
-      createQrMultiLegJourneyQuestion,
-      createQrTravelTableQuestion,
-      createQrPaceQuestion
-    ],
-    geometry: [
-      createQrRectangleAreaQuestion,
-      createQrCuboidVolumeQuestion,
-      createQrFloorPlanQuestion,
-      createQrCylinderVolumeQuestion
-    ]
-  };
-
-  const pool = builders[drill] || builders.percentage;
-  return Array.from({ length: SESSION_LENGTH }, (_, index) => {
-    const question = sampleOne(pool)();
-    return {
-      ...question,
-      sourceMode: "qr",
-      uniqueId: question.uniqueId || `qr-${drill}-${index}-${question.type}-${question.prompt}`
-    };
-  });
+function buildSjtSessionQuestions(complexityLevel = 1) {
+  return Array.from({ length: SESSION_LENGTH }, () => buildSjtQuestion(complexityLevel));
 }
 
-function buildSjtSessionQuestions() {
-  return sampleCount(sjtScenarios, SESSION_LENGTH).map((scenario) => {
-    const promptType = Math.random() > 0.5 ? "appropriateness" : "importance";
-    const source = promptType === "appropriateness" ? scenario.appropriateness : scenario.importance;
-    const indexedResponses = [
-      { response: source.ideal, correct: true, rank: 1 },
-      { response: source.reasonable || source.secondary, correct: false, rank: 2 },
-      { response: source.mild, correct: false, rank: 3 },
-      { response: source.severe, correct: false, rank: 4 }
-    ];
-    const shuffledResponses = shuffle(indexedResponses);
-    const rankingLabels = shuffledResponses
-      .map((item, index) => `${String.fromCharCode(65 + index)}:${item.rank}`)
-      .join(" · ");
-
+function buildDynamicQuestion(mode) {
+  if (mode === "qr") {
     return {
-      sourceMode: "sjt",
-      uniqueId: `sjt-${scenario.conflictId}-${promptType}-${scenario.scenario}`,
-      pillar: scenario.pillar,
-      title: scenario.title,
-      scenario: scenario.scenario,
-      promptType,
-      promptLabel: promptType === "appropriateness" ? "Appropriateness" : "Importance",
-      prompt: promptType === "appropriateness"
-        ? "Which response is the most appropriate?"
-        : "Which factor is the most important to prioritise?",
-      responses: shuffledResponses.map((item) => item.response),
-      answerIndex: shuffledResponses.findIndex((item) => item.correct),
-      rankingLabels,
-      rationale: scenario.rationale,
-      review: null
+      ...buildExtremeQrQuestion(state.session.qrDrill || "percentage", state.session.complexityLevel),
+      sourceMode: "qr",
+      uniqueId: `qr-${state.session.qrDrill || "percentage"}-${state.session.complexityLevel}-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`}`
     };
-  });
+  }
+
+  if (mode === "dm") {
+    const generator = new DmChecklistGenerator({ medicalMode: state.settings.medicalMode });
+    return generator.generateQuestion(state.session.complexityLevel, state.session.seenQuestionIds);
+  }
+
+  if (mode === "sjt") {
+    return buildSjtQuestion(state.session.complexityLevel, state.session.seenQuestionIds);
+  }
+
+  return null;
+}
+
+function ensureSessionQuestionAt(index) {
+  if (!state.session.dynamicDifficulty || state.session.mode === "review") {
+    return;
+  }
+
+  while (state.session.questions.length <= index) {
+    const nextQuestion = buildDynamicQuestion(state.session.mode);
+    if (!nextQuestion) {
+      break;
+    }
+    if (nextQuestion.uniqueId) {
+      state.session.seenQuestionIds.push(nextQuestion.uniqueId);
+    }
+    state.session.questions.push(nextQuestion);
+  }
+}
+
+function updateAdaptiveDifficulty(correct) {
+  if (state.session.mode === "review" || !state.session.dynamicDifficulty) {
+    return;
+  }
+
+  if (correct) {
+    state.session.correctStreak += 1;
+    if (state.session.correctStreak >= 3) {
+      state.session.complexityLevel = Math.min(3, state.session.complexityLevel + 1);
+      state.session.correctStreak = 0;
+    }
+    return;
+  }
+
+  state.session.correctStreak = 0;
 }
 
 function startSession(mode, options = {}) {
@@ -2310,18 +2539,27 @@ function startSession(mode, options = {}) {
   state.session.startedAt = Date.now();
   state.session.qrDrill = options.drill || null;
   state.session.qrDrillLabel = options.drill ? (QR_DRILLS[options.drill]?.label || "Quantitative Reasoning") : "";
+  state.session.complexityLevel = 1;
+  state.session.correctStreak = 0;
 
   if (mode === "vr") {
     state.session.sessionQueue = buildVrSessionQuestions();
+    state.session.questions = [...state.session.sessionQueue];
+    state.session.totalQuestionCount = state.session.questions.length;
   } else if (mode === "dm") {
-    state.session.sessionQueue = buildDmSessionQuestions();
+    state.session.dynamicDifficulty = true;
+    state.session.totalQuestionCount = DM_SESSION_LENGTH;
   } else if (mode === "qr") {
-    state.session.sessionQueue = buildQrSessionQuestions(options.drill);
+    state.session.dynamicDifficulty = true;
+    state.session.totalQuestionCount = SESSION_LENGTH;
   } else if (mode === "sjt") {
-    state.session.sessionQueue = buildSjtSessionQuestions();
+    state.session.dynamicDifficulty = true;
+    state.session.totalQuestionCount = SESSION_LENGTH;
   }
 
-  state.session.questions = [...state.session.sessionQueue];
+  if (state.session.dynamicDifficulty) {
+    ensureSessionQuestionAt(0);
+  }
 
   setScreen("exercise");
   renderCurrentExercise();
@@ -2343,6 +2581,7 @@ function startReviewSession(filter = state.reviewFilter) {
   state.session.questions = reviewQuestions;
   state.session.sessionQueue = [...reviewQuestions];
   state.session.reviewFilter = filter;
+  state.session.totalQuestionCount = reviewQuestions.length;
 
   setScreen("exercise");
   renderCurrentExercise();
@@ -2383,10 +2622,11 @@ function renderCurrentExercise() {
 
 function currentCounterText() {
   const mode = activeQuestionMode();
+  const total = sessionTotalCount();
   if (mode === "dm" || mode === "vr") {
-    return `Set ${state.session.index + 1} of ${state.session.questions.length}`;
+    return `Set ${state.session.index + 1} of ${total}`;
   }
-  return `Question ${state.session.index + 1} of ${state.session.questions.length}`;
+  return `Question ${state.session.index + 1} of ${total}`;
 }
 
 function currentLayoutClass() {
@@ -2440,7 +2680,7 @@ function currentBadgeText(question) {
     return question.mode === "medical" ? "Medical Checklist" : "Logic Checklist";
   }
   if (mode === "qr") {
-    return question.drillLabel || "Skill drill";
+    return `${question.drillLabel || "Skill drill"} • L${question.complexityLevel || state.session.complexityLevel || 1}`;
   }
   return question.promptLabel || question.pillar;
 }
@@ -2625,6 +2865,7 @@ function renderVrQuestion(question) {
       wpm,
       readSeconds
     });
+    updateAdaptiveDifficulty(correctCount === question.questions.length);
 
     if (!isPerfect) {
       triggerQuestionShake();
@@ -2648,7 +2889,7 @@ function renderVrQuestion(question) {
         ...(question.review.note ? [question.review.note] : []),
         ...(question.review.bankMessage ? [`<strong>Status:</strong> ${question.review.bankMessage}`] : [])
       ],
-      buttonLabel: state.session.index === state.session.questions.length - 1 ? "Finish Session" : "Next Set",
+      buttonLabel: state.session.index === sessionTotalCount() - 1 ? "Finish Session" : "Next Set",
       onNext: () => {
         state.session.locked = false;
         continueToNextSet();
@@ -2832,6 +3073,7 @@ function renderDmQuestion(question) {
       wpm,
       readSeconds
     });
+    updateAdaptiveDifficulty(correctCount === 5);
 
     setExerciseFeedback(
       `Score: ${question.review.scoreLabel} • ${correctCount}/5 correct • ${wpm} WPM${bankMessage ? ` • ${bankMessage}` : ""}`,
@@ -2853,7 +3095,7 @@ function renderDmQuestion(question) {
         `<strong>Score:</strong> ${question.review.scoreLabel}`,
         ...(question.review.bankMessage ? [`<strong>Status:</strong> ${question.review.bankMessage}`] : [])
       ],
-      buttonLabel: state.session.index === state.session.questions.length - 1 ? "Finish Session" : "Next Set",
+      buttonLabel: state.session.index === sessionTotalCount() - 1 ? "Finish Session" : "Next Set",
       onNext: () => {
         state.session.locked = false;
         continueToNextSet();
@@ -3018,6 +3260,7 @@ function renderQrQuestion(question) {
     };
 
     state.session.answers.push({ correct });
+    updateAdaptiveDifficulty(correct);
 
     if (!correct) {
       triggerQuestionShake();
@@ -3037,7 +3280,7 @@ function renderQrQuestion(question) {
         `<strong>UCAT Way:</strong> ${question.shortcutWay}`,
         ...(question.review.bankMessage ? [`<strong>Status:</strong> ${question.review.bankMessage}`] : [])
       ],
-      buttonLabel: state.session.index === state.session.questions.length - 1 ? "Finish Session" : "Next Question",
+      buttonLabel: state.session.index === sessionTotalCount() - 1 ? "Finish Session" : "Next Question",
       onNext: () => {
         state.session.locked = false;
         continueToNextSet();
@@ -3148,6 +3391,7 @@ function renderSjtQuestion(question) {
       };
 
       state.session.answers.push({ correct });
+      updateAdaptiveDifficulty(correct);
       if (!correct) {
         triggerQuestionShake();
       }
@@ -3164,7 +3408,7 @@ function renderSjtQuestion(question) {
         question.rationale,
         ...(question.review.bankMessage ? [`<strong>Status:</strong> ${question.review.bankMessage}`] : [])
       ],
-      buttonLabel: state.session.index === state.session.questions.length - 1 ? "Finish Session" : "Next Question",
+      buttonLabel: state.session.index === sessionTotalCount() - 1 ? "Finish Session" : "Next Question",
       onNext: () => {
         state.session.locked = false;
         continueToNextSet();
@@ -3176,20 +3420,22 @@ function renderSjtQuestion(question) {
 function queueNextOrFinish(delay = 1000) {
   queueNextStep(() => {
     state.session.index += 1;
-    if (state.session.index >= state.session.questions.length) {
+    if (state.session.index >= sessionTotalCount()) {
       finishSession();
       return;
     }
+    ensureSessionQuestionAt(state.session.index);
     renderCurrentExercise();
   }, delay);
 }
 
 function continueToNextSet() {
   state.session.index += 1;
-  if (state.session.index >= state.session.questions.length) {
+  if (state.session.index >= sessionTotalCount()) {
     finishSession();
     return;
   }
+  ensureSessionQuestionAt(state.session.index);
   renderCurrentExercise();
 }
 
@@ -3203,12 +3449,12 @@ function finishSession() {
   const isVr = state.session.mode === "vr";
   const reviewAnswers = isReview ? state.session.answers : [];
   const reviewAccuracy = isReview
-    ? Math.round((reviewAnswers.filter((item) => item.correct).length / Math.max(1, state.session.questions.length)) * 100)
+    ? Math.round((reviewAnswers.filter((item) => item.correct).length / Math.max(1, sessionTotalCount())) * 100)
     : 0;
   const dmPoints = isDm ? state.session.answers.reduce((sum, item) => sum + (item.points || 0), 0) : null;
-  const dmMaxPoints = isDm ? state.session.questions.length * 2 : null;
+  const dmMaxPoints = isDm ? sessionTotalCount() * 2 : null;
   const dmCorrectStatements = isDm ? state.session.answers.reduce((sum, item) => sum + (item.correctCount || 0), 0) : null;
-  const dmTotalStatements = isDm ? state.session.questions.length * 5 : null;
+  const dmTotalStatements = isDm ? sessionTotalCount() * 5 : null;
   const vrCorrectStatements = isVr ? state.session.answers.reduce((sum, item) => sum + (item.correctCount || 0), 0) : null;
   const vrTotalStatements = isVr ? state.session.questions.reduce((sum, item) => sum + item.questions.length, 0) : null;
   const accuracy = isDm
@@ -3217,11 +3463,11 @@ function finishSession() {
       ? Math.round(((vrCorrectStatements || 0) / Math.max(1, vrTotalStatements || 1)) * 100)
       : isReview
         ? reviewAccuracy
-        : Math.round((state.session.answers.filter((item) => item.correct).length / state.session.questions.length) * 100);
+        : Math.round((state.session.answers.filter((item) => item.correct).length / sessionTotalCount()) * 100);
   const summary = {
     mode: state.session.mode,
     date: new Date().toISOString(),
-    totalQuestions: state.session.questions.length,
+    totalQuestions: sessionTotalCount(),
     accuracy,
     timeSeconds: totalSeconds,
     avgWpm: (state.session.mode === "vr" || state.session.mode === "dm") ? Math.round(average(state.session.answers.map((item) => item.wpm || 0))) : null,
@@ -3650,6 +3896,7 @@ function createQrQuestion(config) {
   return {
     drill: config.drill,
     drillLabel: QR_DRILLS[config.drill]?.label || "Quantitative Reasoning",
+    complexityLevel: config.complexityLevel || 1,
     type: config.type,
     prompt: config.prompt,
     answer: config.answer,
@@ -3671,6 +3918,222 @@ function createQrQuestion(config) {
     estimateStartedAt: 0,
     solveStartedAt: 0
   };
+}
+
+const UNIT_CONVERSION_MATRIX = {
+  cm3PerLitre: 1000,
+  cm2PerM2: 10000,
+  kmPerMile: 1.609,
+  minutesPerHour: 60
+};
+
+function createNoiseTableRow(label, choices) {
+  return { label, cells: [{ id: `${label.toLowerCase().replace(/\s+/g, "-")}-noise`, label: sampleOne(choices) }] };
+}
+
+function buildExtremeQrQuestion(drill = "percentage", complexityLevel = 1) {
+  const builders = {
+    percentage: [
+      createQrExtremeCarpetQuestion,
+      createQrExtremePosterQuestion
+    ],
+    conversion: [
+      createQrExtremeTherapyRateQuestion,
+      createQrExtremeInfusionCostQuestion
+    ],
+    rate: [
+      createQrExtremeJourneySpeedQuestion,
+      createQrExtremeCourierCostQuestion
+    ],
+    geometry: [
+      createQrExtremeTankQuestion,
+      createQrExtremeFlooringQuestion
+    ]
+  };
+
+  return sampleOne(builders[drill] || builders.percentage)(complexityLevel);
+}
+
+function createQrExtremeCarpetQuestion(complexityLevel = 1) {
+  const length = sampleOne([3.2, 3.6, 4.1, 4.4]);
+  const width = sampleOne([2.4, 2.8, 3.1, 3.5]);
+  const centsPerCm2 = sampleOne([0.08, 0.11, 0.14]);
+  const discount = complexityLevel >= 2 ? sampleOne([10, 12, 15]) : 0;
+  const waste = complexityLevel >= 3 ? sampleOne([5, 8, 10]) : 0;
+  const areaM2 = length * width;
+  const boostedArea = areaM2 * (1 + waste / 100);
+  const areaCm2 = boostedArea * UNIT_CONVERSION_MATRIX.cm2PerM2;
+  const eurosBeforeDiscount = areaCm2 * (centsPerCm2 / 100);
+  const answer = roundTo(eurosBeforeDiscount * (1 - discount / 100), 2);
+
+  const tableData = {
+    headers: ["Flooring Brief", "Value"],
+    rows: [
+      { label: "Room length", cells: [{ id: "length", label: `${length} m` }] },
+      { label: "Room width", cells: [{ id: "width", label: `${width} m` }] },
+      { label: "Cost", cells: [{ id: "rate", label: `${centsPerCm2} euro cents/cm²` }] },
+      ...(discount ? [{ label: "Discount", cells: [{ id: "discount", label: `${discount}%` }] }] : []),
+      ...(waste ? [{ label: "Waste allowance", cells: [{ id: "waste", label: `${waste}%` }] }] : []),
+      createNoiseTableRow("Skirting boards", ["12 m", "14 m", "16 m"]),
+      createNoiseTableRow("Adhesive tubs", ["3", "4", "5"])
+    ]
+  };
+
+  return createQrQuestion({
+    drill: "percentage",
+    type: "Area Discount Chain",
+    prompt: `Find the final carpet cost in euros. Convert square metres to square centimetres before using the quoted rate${waste ? ", include the waste allowance," : ""}${discount ? " and then apply the discount." : "."}`,
+    answer,
+    complexityLevel,
+    tablePrompt: `Tap the dimensions, the euro-cent rate${discount ? ", and the discount" : ""}${waste ? ", plus the waste allowance" : ""}.`,
+    tableData,
+    requiredCells: ["length", "width", "rate", ...(discount ? ["discount"] : []), ...(waste ? ["waste"] : [])],
+    standardWay: `Area = ${length} x ${width} = ${formatQrNumber(areaM2, 2)} m². Convert to ${formatQrNumber(areaCm2, 0)} cm², price it in euro cents, then ${discount ? "apply the discount" : "convert cents to euros"}.`,
+    shortcutWay: `Do the geometry first, then multiply by ${formatQrNumber(centsPerCm2, 2)} cents as ${formatQrNumber(centsPerCm2 / 100, 4)} euros per cm² so you only convert currency once at the end.`,
+    answerLabel: `€${formatQrNumber(answer)}`
+  });
+}
+
+function createQrExtremePosterQuestion(complexityLevel = 1) {
+  const length = sampleOne([0.9, 1.2, 1.4, 1.6]);
+  const width = sampleOne([0.6, 0.75, 0.8, 0.95]);
+  const printRatePence = sampleOne([0.22, 0.28, 0.31]);
+  const vat = complexityLevel >= 2 ? sampleOne([5, 10, 20]) : 0;
+  const answerBase = length * width * UNIT_CONVERSION_MATRIX.cm2PerM2 * (printRatePence / 100);
+  const answer = roundTo(answerBase * (1 + vat / 100), 2);
+  return createQrQuestion({
+    drill: "percentage",
+    type: "Poster VAT Chain",
+    prompt: `A poster measures ${length} m by ${width} m. Printing costs ${printRatePence} pence per cm²${vat ? ` and VAT is ${vat}%` : ""}. What is the final price in pounds?`,
+    answer,
+    complexityLevel,
+    standardWay: `Convert the poster area from m² to cm², multiply by the pence rate, convert pence to pounds, then ${vat ? "add VAT" : "stop there"}.`,
+    shortcutWay: `Use the area in m² first, then recognise that converting to cm² multiplies by 10,000, so every 0.01 pence becomes £1 over the whole area.`,
+    answerLabel: `£${formatQrNumber(answer)}`
+  });
+}
+
+function createQrExtremeTherapyRateQuestion(complexityLevel = 1) {
+  const hours = sampleOne([1.25, 1.5, 1.75, 2.25]);
+  const eurosPerMinute = sampleOne([0.45, 0.55, 0.7]);
+  const exchangeRate = sampleOne([1.14, 1.21, 1.28]);
+  const surcharge = complexityLevel >= 3 ? sampleOne([8, 10, 12]) : 0;
+  const euros = hours * UNIT_CONVERSION_MATRIX.minutesPerHour * eurosPerMinute;
+  const pounds = euros / exchangeRate;
+  const answer = roundTo(pounds * (1 + surcharge / 100), 2);
+  return createQrQuestion({
+    drill: "conversion",
+    type: "Currency + Time Chain",
+    prompt: `A booth charges €${eurosPerMinute} per minute. A session lasts ${hours} hours and £1 = €${exchangeRate}.${surcharge ? ` Add a ${surcharge}% late-booking surcharge after converting.` : ""} What is the total cost in pounds?`,
+    answer,
+    complexityLevel,
+    standardWay: `Convert ${hours} hours to minutes, calculate the euro total, divide by the exchange rate to get pounds, then ${surcharge ? "add the surcharge" : "finish"}.`,
+    shortcutWay: `Find the euro cost per hour first, scale to ${hours} hours, and leave the currency conversion until one clean division at the end.`,
+    answerLabel: `£${formatQrNumber(answer)}`
+  });
+}
+
+function createQrExtremeInfusionCostQuestion(complexityLevel = 1) {
+  const volumeCm3 = sampleOne([1250, 1600, 1850, 2200]);
+  const mlPerMinute = sampleOne([18, 22, 25, 30]);
+  const eurosPerHour = sampleOne([6.4, 7.2, 8.1]);
+  const discount = complexityLevel >= 2 ? sampleOne([5, 10, 12]) : 0;
+  const litres = volumeCm3 / UNIT_CONVERSION_MATRIX.cm3PerLitre;
+  const totalMinutes = (litres * 1000) / mlPerMinute;
+  const totalHours = totalMinutes / UNIT_CONVERSION_MATRIX.minutesPerHour;
+  const answer = roundTo((totalHours * eurosPerHour) * (1 - discount / 100), 2);
+  return createQrQuestion({
+    drill: "conversion",
+    type: "cm³ to L Time Chain",
+    prompt: `An infusion bag holds ${volumeCm3} cm³. It runs at ${mlPerMinute} mL per minute, and monitoring costs €${eurosPerHour} per hour.${discount ? ` A ${discount}% discount applies to the monitoring bill.` : ""} What is the final cost in euros?`,
+    answer,
+    complexityLevel,
+    standardWay: `Convert cm³ to litres, litres to millilitres, work out the running time in minutes, convert to hours, then price the monitoring${discount ? " and apply the discount" : ""}.`,
+    shortcutWay: `Because 1 cm³ = 1 mL, jump straight from ${volumeCm3} cm³ to ${volumeCm3} mL, then divide by the flow rate before converting minutes to hours.`,
+    answerLabel: `€${formatQrNumber(answer)}`
+  });
+}
+
+function createQrExtremeJourneySpeedQuestion(complexityLevel = 1) {
+  const miles = sampleOne([42, 55, 63, 78]);
+  const minutes = sampleOne([38, 44, 52, 60]);
+  const km = miles * UNIT_CONVERSION_MATRIX.kmPerMile;
+  const hours = minutes / UNIT_CONVERSION_MATRIX.minutesPerHour;
+  const answer = roundTo(km / hours, 2);
+  return createQrQuestion({
+    drill: "rate",
+    type: "mph to km/h Chain",
+    prompt: `A response car travels ${miles} miles in ${minutes} minutes. What is the average speed in km/h?`,
+    answer,
+    complexityLevel,
+    standardWay: `Convert miles to kilometres, convert minutes to hours, then divide distance by time.`,
+    shortcutWay: `Scale ${minutes} minutes up to an hour first, then apply the 1.609 miles-to-kilometres factor once at the end.`,
+    answerLabel: `${formatQrNumber(answer)} km/h`
+  });
+}
+
+function createQrExtremeCourierCostQuestion(complexityLevel = 1) {
+  const legMiles = sampleOne([12, 18, 21, 25]);
+  const journeys = sampleOne([3, 4, 5]);
+  const euroCentsPerKm = sampleOne([18, 24, 27]);
+  const exchangeRate = sampleOne([1.15, 1.22, 1.29]);
+  const serviceFee = complexityLevel >= 3 ? sampleOne([6, 8, 10]) : 0;
+  const totalKm = legMiles * journeys * UNIT_CONVERSION_MATRIX.kmPerMile;
+  const euros = totalKm * (euroCentsPerKm / 100);
+  const pounds = euros / exchangeRate;
+  const answer = roundTo(pounds + serviceFee, 2);
+  return createQrQuestion({
+    drill: "rate",
+    type: "Distance Cost Chain",
+    prompt: `A courier makes ${journeys} identical trips of ${legMiles} miles each. The company charges ${euroCentsPerKm} euro cents per kilometre and £1 = €${exchangeRate}.${serviceFee ? ` Add a £${serviceFee} service fee.` : ""} What is the total bill in pounds?`,
+    answer,
+    complexityLevel,
+    standardWay: `Convert the full mileage to kilometres, price it in euro cents, convert to euros, then divide by the exchange rate${serviceFee ? " and add the service fee" : ""}.`,
+    shortcutWay: `Group all trips first, then use cents as decimals of a euro so you only change currency once.`,
+    answerLabel: `£${formatQrNumber(answer)}`
+  });
+}
+
+function createQrExtremeTankQuestion(complexityLevel = 1) {
+  const length = sampleOne([45, 50, 60]);
+  const width = sampleOne([20, 24, 28]);
+  const height = sampleOne([18, 22, 25]);
+  const eurosPerLitre = sampleOne([1.8, 2.1, 2.4]);
+  const exchangeRate = sampleOne([1.16, 1.23, 1.29]);
+  const fillPercent = complexityLevel >= 2 ? sampleOne([80, 85, 90]) : 100;
+  const volumeCm3 = length * width * height;
+  const litres = volumeCm3 / UNIT_CONVERSION_MATRIX.cm3PerLitre;
+  const euros = (litres * (fillPercent / 100)) * eurosPerLitre;
+  const answer = roundTo(euros / exchangeRate, 2);
+  return createQrQuestion({
+    drill: "geometry",
+    type: "Cuboid to Litre Chain",
+    prompt: `A tank measures ${length} cm by ${width} cm by ${height} cm. Liquid costs €${eurosPerLitre} per litre and £1 = €${exchangeRate}.${fillPercent < 100 ? ` The tank is only filled to ${fillPercent}%.` : ""} What is the liquid cost in pounds?`,
+    answer,
+    complexityLevel,
+    standardWay: `Find the volume in cm³, convert to litres, ${fillPercent < 100 ? "apply the fill percentage, " : ""}price it in euros, then divide by ${exchangeRate} to convert into pounds.`,
+    shortcutWay: `Treat cm³ to litres as a clean divide by 1000, keep the euro total together, and only convert currency once at the end.`,
+    answerLabel: `£${formatQrNumber(answer)}`
+  });
+}
+
+function createQrExtremeFlooringQuestion(complexityLevel = 1) {
+  const roomAreaM2 = sampleOne([11.5, 13.2, 14.8, 16.4]);
+  const rateCentsPerCm2 = sampleOne([0.05, 0.07, 0.09]);
+  const exchangeRate = sampleOne([1.18, 1.24, 1.31]);
+  const markup = complexityLevel >= 2 ? sampleOne([6, 9, 12]) : 0;
+  const pounds = (roomAreaM2 * UNIT_CONVERSION_MATRIX.cm2PerM2 * (rateCentsPerCm2 / 100)) / exchangeRate;
+  const answer = roundTo(pounds * (1 + markup / 100), 2);
+  return createQrQuestion({
+    drill: "geometry",
+    type: "m² Pricing Trap",
+    prompt: `A room covers ${roomAreaM2} m². Flooring costs ${rateCentsPerCm2} euro cents per cm² and £1 = €${exchangeRate}.${markup ? ` Add a ${markup}% installer markup after converting to pounds.` : ""} What is the total cost in pounds?`,
+    answer,
+    complexityLevel,
+    standardWay: `Convert m² to cm² using 10,000, price the floor in euro cents, convert to euros, then divide by the exchange rate${markup ? " and add the markup" : ""}.`,
+    shortcutWay: `The big trap is that area conversion squares the 100. Once you use 10,000 correctly, keep all currency work until the end.`,
+    answerLabel: `£${formatQrNumber(answer)}`
+  });
 }
 
 function createQrPercentageIncreaseQuestion() {

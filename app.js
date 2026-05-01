@@ -3607,7 +3607,7 @@ function setupInstallPrompt() {
 
 function registerServiceWorker() {
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js?v=20260428b");
+    navigator.serviceWorker.register("sw.js?v=20260501a");
   }
 }
 

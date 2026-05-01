@@ -1,10 +1,10 @@
-const CACHE_NAME = "ucat-reflex-v3";
+const CACHE_NAME = "ucat-reflex-v4";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=20260428b",
-  "./app.js?v=20260428b",
-  "./manifest.json?v=20260428b",
+  "./styles.css?v=20260501a",
+  "./app.js?v=20260501a",
+  "./manifest.json?v=20260501a",
   "./icons/icon-192.svg",
   "./icons/icon-512.svg"
 ];
